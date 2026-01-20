@@ -277,6 +277,18 @@ async function checkBirthdays() {
         }
       } catch (error) {
         console.error('Error sending birthday message:', error);
+        const { MongoClient } = require('mongodb');
+
+const mongoClient = new MongoClient(process.env.MONGO_URI);
+
+async function initMongo() {
+  await mongoClient.connect();
+  const db = mongoClient.db('birthdayBot'); // can be any name
+  birthdaysCollection = db.collection('birthdays');
+  console.log('Connected to MongoDB Atlas');
+}
+
+        
       }
     }
   }
@@ -284,3 +296,4 @@ async function checkBirthdays() {
 
 // Login with your bot token
 client.login(process.env.TOKEN);
+const mongoClient = new MongoClient(process.env.MONGO_URI);
