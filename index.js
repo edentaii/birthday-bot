@@ -2,12 +2,13 @@ const { Client, GatewayIntentBits, EmbedBuilder } = require('discord.js');
 const fs = require('fs');
 
 const client = new Client({
-intents: [
-@@ -8,13 +9,45 @@ const client = new Client({
-],
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent,
+  ],
 });
 
-// Store birthdays in memory (use a database for production)
 // Store birthdays in memory
 const birthdays = new Map();
 const BIRTHDAY_FILE = 'birthdays.json';
@@ -45,40 +46,122 @@ function saveBirthdays() {
 }
 
 client.once('ready', () => {
-console.log(`Logged in as ${client.user.tag}`);
+  console.log(`Logged in as ${client.user.tag}`);
   loadBirthdays();
-checkBirthdays();
-// Check for birthdays every hour
-setInterval(checkBirthdays, 60 * 60 * 1000);
-@@ -45,6 +78,7 @@ client.on('messageCreate', async (message) => {
-const serverId = message.guild.id;
-const key = `${serverId}-${user.id}`;
-birthdays.set(key, { userId: user.id, date, serverId });
+  checkBirthdays();
+  // Check for birthdays every hour
+  setInterval(checkBirthdays, 60 * 60 * 1000);
+});
+
+client.on('messageCreate', async (message) => {
+  if (message.author.bot || !message.content.startsWith(PREFIX)) return;
+
+  const args = message.content.slice(PREFIX.length).trim().split(/ +/);
+  const command = args.shift().toLowerCase();
+
+  if (command === 'addbirthday') {
+    // Usage: !addbirthday @user MM/DD or !addbirthday MM/DD (for yourself)
+    let user = message.mentions.users.first();
+    let date;
+
+    if (user) {
+      date = args[1];
+    } else {
+      user = message.author;
+      date = args[0];
+    }
+
+    if (!date || !isValidDate(date)) {
+      return message.reply('Please use the format: `!addbirthday @user MM/DD` or `!addbirthday MM/DD` (for yourself)');
+    }
+
+    const serverId = message.guild.id;
+    const key = `${serverId}-${user.id}`;
+    birthdays.set(key, { userId: user.id, date, serverId });
     saveBirthdays();
 
-message.reply(`✅ Birthday added for ${user.username} on ${date}!`);
-}
-@@ -56,6 +90,7 @@ client.on('messageCreate', async (message) => {
+    message.reply(`✅ Birthday added for ${user.username} on ${date}!`);
+  }
 
-if (birthdays.has(key)) {
-birthdays.delete(key);
+  if (command === 'removebirthday') {
+    const user = message.mentions.users.first() || message.author;
+    const serverId = message.guild.id;
+    const key = `${serverId}-${user.id}`;
+
+    if (birthdays.has(key)) {
+      birthdays.delete(key);
       saveBirthdays();
-message.reply(`🗑️ Birthday removed for ${user.username}`);
-} else {
-message.reply('No birthday found for this user.');
-@@ -118,12 +153,76 @@ client.on('messageCreate', async (message) => {
-{ name: '!removebirthday', value: 'Remove your birthday' },
-{ name: '!birthdays', value: 'List all birthdays' },
-{ name: '!nextbirthday', value: 'Show the next upcoming birthday' },
+      message.reply(`🗑️ Birthday removed for ${user.username}`);
+    } else {
+      message.reply('No birthday found for this user.');
+    }
+  }
+
+  if (command === 'birthdays') {
+    const serverId = message.guild.id;
+    const serverBirthdays = Array.from(birthdays.values())
+      .filter(b => b.serverId === serverId)
+      .sort((a, b) => {
+        const [aMonth, aDay] = a.date.split('/').map(Number);
+        const [bMonth, bDay] = b.date.split('/').map(Number);
+        return aMonth === bMonth ? aDay - bDay : aMonth - bMonth;
+      });
+
+    if (serverBirthdays.length === 0) {
+      return message.reply('No birthdays saved yet! Use `!addbirthday MM/DD` to add yours.');
+    }
+
+    const embed = new EmbedBuilder()
+      .setColor('#FF69B4')
+      .setTitle('🎂 Birthday List')
+      .setDescription(
+        serverBirthdays
+          .map(b => `<@${b.userId}> - ${b.date}`)
+          .join('\n')
+      )
+      .setTimestamp();
+
+    message.channel.send({ embeds: [embed] });
+  }
+
+  if (command === 'nextbirthday') {
+    const serverId = message.guild.id;
+    const next = getNextBirthday(serverId);
+
+    if (!next) {
+      return message.reply('No upcoming birthdays!');
+    }
+
+    const daysUntil = getDaysUntilBirthday(next.date);
+    const embed = new EmbedBuilder()
+      .setColor('#FFD700')
+      .setTitle('🎉 Next Birthday')
+      .setDescription(`<@${next.userId}> - ${next.date}`)
+      .addFields({ name: 'Days until birthday', value: daysUntil.toString() })
+      .setTimestamp();
+
+    message.channel.send({ embeds: [embed] });
+  }
+
+  if (command === 'help') {
+    const embed = new EmbedBuilder()
+      .setColor('#5865F2')
+      .setTitle('🎂 Birthday Bot Commands')
+      .addFields(
+        { name: '!addbirthday MM/DD', value: 'Add your own birthday' },
+        { name: '!addbirthday @user MM/DD', value: 'Add someone else\'s birthday' },
+        { name: '!removebirthday', value: 'Remove your birthday' },
+        { name: '!birthdays', value: 'List all birthdays' },
+        { name: '!nextbirthday', value: 'Show the next upcoming birthday' },
         { name: '!play 1', value: 'Play song 1 (Boolymon)' },
         { name: '!play 2', value: 'Play song 2 (Duvet style)' },
         { name: '!stop', value: 'Stop the bot from singing' },
-{ name: '!help', value: 'Show this help message' }
-)
-.setTimestamp();
+        { name: '!help', value: 'Show this help message' }
+      )
+      .setTimestamp();
 
-message.channel.send({ embeds: [embed] });
-}
+    message.channel.send({ embeds: [embed] });
+  }
 
   if (command === 'play') {
     if (activeSingers.has(message.channel.id)) {
@@ -143,29 +226,61 @@ message.channel.send({ embeds: [embed] });
 });
 
 function isValidDate(dateStr) {
-@@ -135,13 +234,13 @@ function getDaysUntilBirthday(dateStr) {
-const [month, day] = dateStr.split('/').map(Number);
-const today = new Date();
-const currentYear = today.getFullYear();
-  
-
-let nextBirthday = new Date(currentYear, month - 1, day);
-  
-
-if (nextBirthday < today) {
-nextBirthday = new Date(currentYear + 1, month - 1, day);
+  const regex = /^(0?[1-9]|1[0-2])\/(0?[1-9]|[12][0-9]|3[01])$/;
+  return regex.test(dateStr);
 }
-  
 
-const diffTime = nextBirthday - today;
-return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+function getDaysUntilBirthday(dateStr) {
+  const [month, day] = dateStr.split('/').map(Number);
+  const today = new Date();
+  const currentYear = today.getFullYear();
+
+  let nextBirthday = new Date(currentYear, month - 1, day);
+
+  if (nextBirthday < today) {
+    nextBirthday = new Date(currentYear + 1, month - 1, day);
+  }
+
+  const diffTime = nextBirthday - today;
+  return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
 }
-@@ -166,7 +265,7 @@ async function checkBirthdays() {
-try {
-const guild = await client.guilds.fetch(birthday.serverId);
-const channel = guild.systemChannel || guild.channels.cache.find(ch => ch.name === 'general');
-        
 
-if (channel) {
-const embed = new EmbedBuilder()
-.setColor('#FF1493')
+function getNextBirthday(serverId) {
+  const serverBirthdays = Array.from(birthdays.values())
+    .filter(b => b.serverId === serverId);
+
+  if (serverBirthdays.length === 0) return null;
+
+  return serverBirthdays
+    .map(b => ({ ...b, daysUntil: getDaysUntilBirthday(b.date) }))
+    .sort((a, b) => a.daysUntil - b.daysUntil)[0];
+}
+
+async function checkBirthdays() {
+  const today = new Date();
+  const todayStr = `${today.getMonth() + 1}/${today.getDate()}`;
+
+  for (const [key, birthday] of birthdays.entries()) {
+    if (birthday.date === todayStr) {
+      try {
+        const guild = await client.guilds.fetch(birthday.serverId);
+        const channel = guild.systemChannel || guild.channels.cache.find(ch => ch.name === 'general');
+
+        if (channel) {
+          const embed = new EmbedBuilder()
+            .setColor('#FF1493')
+            .setTitle('🎉 Happy Birthday! 🎂')
+            .setDescription(`It's <@${birthday.userId}>'s birthday today! 🎊`)
+            .setTimestamp();
+
+          channel.send({ content: '@everyone', embeds: [embed] });
+        }
+      } catch (error) {
+        console.error('Error sending birthday message:', error);
+      }
+    }
+  }
+}
+
+// Login with your bot token
+client.login(process.env.TOKEN);
